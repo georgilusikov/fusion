@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/fusion/judge.schema.json",
+  "title": "FusionJudgeResult",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "consensus",
+    "contradictions",
+    "coverage_gaps",
+    "unique_insights",
+    "blind_spots",
+    "recommendation"
+  ],
+  "properties": {
+    "consensus": {"type": "array", "items": {"type": "string"}},
+    "contradictions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["point", "sides"],
+        "properties": {
+          "point": {"type": "string"},
+          "sides": {"type": "string"}
+        }
+      }
+    },
+    "coverage_gaps": {"type": "array", "items": {"type": "string"}},
+    "unique_insights": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["model", "insight"],
+        "properties": {
+          "model": {"type": "string"},
+          "insight": {"type": "string"}
+        }
+      }
+    },
+    "blind_spots": {"type": "array", "items": {"type": "string"}},
+    "recommendation": {"type": "string"},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+  }
+}
