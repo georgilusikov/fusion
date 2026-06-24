@@ -7,7 +7,7 @@ description: >
 
 # Fusion — Multi-Model Deliberation
 
-Pipeline: **Panel → validated Judge → optional Drafter**.
+Pipeline: **Panel → validated Judge → optional review/escalation → Drafter**.
 
 ## Canonical defaults
 
@@ -26,6 +26,8 @@ The CLI is the source of truth:
 | `--retries` | `2` |
 | `--backoff` | `0.5` seconds |
 | `--repair-attempts` | `1` (`pro` enforces at least `2`) |
+| `--reviewers` | `2` for `pro`, otherwise `0` |
+| `--no-escalate` | off |
 
 `adaptive` classifies prompt complexity. Without benchmark results it maps
 `lite → dq` and `pro → core`. An explicit `--preset` or `--panel` wins.
@@ -41,8 +43,8 @@ python3 scripts/fusion.py "PROMPT" --dry-run
 ## Strategies
 
 - `lite`: compact, inexpensive panel; explicit decomposition and calibrated confidence.
-- `pro`: broader panel, stronger schema-repair policy, and source answers supplied to the drafter.
-- `adaptive`: routes to `lite` or `pro`, then uses benchmark utility when available.
+- `pro`: broader panel, two backend-diverse review revisions, stronger schema-repair policy, and source answers supplied to the drafter.
+- `adaptive`: routes to `lite` or `pro`, uses benchmark utility when available, and can escalate once to `power` when the first pass looks risky.
 
 ## Result contract
 

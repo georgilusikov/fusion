@@ -11,15 +11,52 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from .config import PRESETS, DispatchConfig, ModelResult
+from .config import PRESETS, DispatchConfig, Member, ModelResult
 from .dispatch import dispatch
 from .judge import run_judge
+from .rounds import combine_unique_results, escalation_reasons, review_round
 from .routing import (
     aggregate_metrics, failed_results, load_pricing, parse_member,
     parse_panel, select_strategy, successful_results,
 )
 
 # --- orchestration ---------------------------------------------------------
+
+def _run_panel(
+    members: Sequence[Member],
+    prompt: str,
+    depth: str,
+    config: DispatchConfig,
+) -> list[ModelResult]:
+    panel_results: list[ModelResult] = []
+    with ThreadPoolExecutor(max_workers=max(1, len(members))) as executor:
+        futures = {
+            executor.submit(dispatch, member, prompt, depth, config): member.label
+            for member in members
+        }
+        for future in as_completed(futures):
+            try:
+                result = future.result()
+            except Exception as exc:
+                label = futures[future]
+                result = ModelResult(
+                    label=label,
+                    backend="unknown",
+                    kind="unknown",
+                    ok=False,
+                    errors=[f"unhandled dispatch error: {type(exc).__name__}: {exc}"],
+                )
+            panel_results.append(result)
+            print(
+                f"[fusion] panel {result.label}: {'ok' if result.ok else 'FAIL'} "
+                f"attempts={result.attempts} latency={result.latency_ms}ms",
+                file=sys.stderr,
+            )
+
+    order = {member.label: index for index, member in enumerate(members)}
+    panel_results.sort(key=lambda item: order.get(item.label, len(order)))
+    return panel_results
+
 
 def _draft_prompt(
     user_prompt: str,
@@ -105,44 +142,83 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         file=sys.stderr,
     )
 
-    panel_results: list[ModelResult] = []
-    with ThreadPoolExecutor(max_workers=max(1, len(members))) as executor:
-        futures = {
-            executor.submit(dispatch, member, prompt, args.depth, config): member.label
-            for member in members
+    panel_results = _run_panel(members, prompt, args.depth, config)
+    rounds: list[dict[str, Any]] = [
+        {
+            "name": "initial",
+            "members": [member.label for member in members],
+            "judge_valid": None,
         }
-        for future in as_completed(futures):
-            try:
-                result = future.result()
-            except Exception as exc:
-                label = futures[future]
-                result = ModelResult(
-                    label=label,
-                    backend="unknown",
-                    kind="unknown",
-                    ok=False,
-                    errors=[f"unhandled dispatch error: {type(exc).__name__}: {exc}"],
-                )
-            panel_results.append(result)
-            print(
-                f"[fusion] panel {result.label}: {'ok' if result.ok else 'FAIL'} "
-                f"attempts={result.attempts} latency={result.latency_ms}ms",
-                file=sys.stderr,
-            )
-
-    order = {member.label: index for index, member in enumerate(members)}
-    panel_results.sort(key=lambda item: order.get(item.label, len(order)))
-    successes = successful_results(panel_results)
-    failures = failed_results(panel_results)
+    ]
 
     effective_repairs = max(args.repair_attempts, 2) if decision.resolved == "pro" else args.repair_attempts
     judge = run_judge(
         judge_member,
         prompt,
-        successes,
+        successful_results(panel_results),
         config,
         repair_attempts=effective_repairs,
     )
+    rounds[0]["judge_valid"] = bool(judge.get("valid"))
+
+    reviewer_count = (
+        args.reviewers
+        if args.reviewers is not None
+        else (2 if decision.resolved == "pro" else 0)
+    )
+    if reviewer_count > 0 and successful_results(panel_results):
+        reviews = review_round(
+            prompt,
+            members,
+            panel_results,
+            judge,
+            args.depth,
+            config,
+            reviewer_count,
+            log=lambda message: print(f"[fusion] {message}", file=sys.stderr),
+        )
+        panel_results.extend(reviews)
+        if successful_results(reviews):
+            judge = run_judge(
+                judge_member,
+                prompt,
+                successful_results(panel_results),
+                config,
+                repair_attempts=effective_repairs,
+            )
+        rounds.append(
+            {
+                "name": "review",
+                "members": [item.label for item in reviews],
+                "judge_valid": bool(judge.get("valid")),
+            }
+        )
+
+    explicit_panel = args.panel is not None or args.preset is not None
+    reasons = escalation_reasons(panel_results, judge)
+    if args.strategy == "adaptive" and reasons and not args.no_escalate and not explicit_panel:
+        print(f"[fusion] adaptive escalation: {', '.join(reasons)}", file=sys.stderr)
+        power_members = parse_panel(PRESETS["power"], same_mode=args.mode == "same")
+        escalated = _run_panel(power_members, prompt, args.depth, config)
+        panel_results = combine_unique_results(panel_results, escalated)
+        judge = run_judge(
+            judge_member,
+            prompt,
+            successful_results(panel_results),
+            config,
+            repair_attempts=effective_repairs,
+        )
+        rounds.append(
+            {
+                "name": "adaptive-escalation",
+                "reasons": reasons,
+                "members": [item.label for item in escalated],
+                "judge_valid": bool(judge.get("valid")),
+            }
+        )
+
+    successes = successful_results(panel_results)
+    failures = failed_results(panel_results)
 
     all_results = list(panel_results)
     judge_result = judge.get("result")
@@ -161,6 +237,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "panel": [item.to_dict() for item in panel_results],
         "successful_panel": [item.label for item in successes],
         "failed_panel": [item.label for item in failures],
+        "rounds": rounds,
         "judge": judge,
     }
 

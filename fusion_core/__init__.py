@@ -6,3 +6,4 @@ from .workspace import *
 from .dispatch import *
 from .judge import *
 from .orchestration import *
+from .rounds import *

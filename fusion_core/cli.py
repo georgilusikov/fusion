@@ -43,6 +43,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--retries", type=int, default=DEFAULT_RETRIES)
     parser.add_argument("--backoff", type=float, default=DEFAULT_BACKOFF)
     parser.add_argument("--repair-attempts", type=int, default=DEFAULT_REPAIR_ATTEMPTS)
+    parser.add_argument(
+        "--reviewers",
+        type=int,
+        default=None,
+        help="override review-round member count (default: 2 for pro, 0 otherwise)",
+    )
+    parser.add_argument(
+        "--no-escalate",
+        action="store_true",
+        help="disable adaptive escalation to the power panel",
+    )
     parser.add_argument("--auto-draft", metavar="MEMBER", help="run a final drafter member")
     parser.add_argument(
         "--benchmark-results", default=str(REPO_ROOT / "benchmarks" / "results.json"),
@@ -61,6 +72,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.retries < 0 or args.repair_attempts < 0 or args.timeout <= 0 or args.backoff < 0:
         parser.error("timeout must be positive; retries, repair-attempts, and backoff must be non-negative")
+    if args.reviewers is not None and args.reviewers < 0:
+        parser.error("reviewers must be non-negative")
     bundle, exit_code = run_fusion(args)
     print(json.dumps(bundle, ensure_ascii=False, indent=2))
     return exit_code
