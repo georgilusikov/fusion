@@ -154,6 +154,27 @@ class FusionCoreTests(unittest.TestCase):
             constrained = fusion.select_strategy("simple", "lite", benchmark_path=path, budget_usd=0.001)
             self.assertEqual(constrained.preset, "free")
 
+    def test_cli_review_and_escalation_flags(self) -> None:
+        parser = fusion.build_parser()
+        args = parser.parse_args(["question", "--reviewers", "1", "--no-escalate"])
+        self.assertEqual(args.reviewers, 1)
+        self.assertTrue(args.no_escalate)
+
+    def test_escalation_reasons_exported(self) -> None:
+        panel = [
+            fusion.ModelResult(label="a", backend="x", kind="api", ok=True, answer="one"),
+            fusion.ModelResult(label="b", backend="y", kind="api", ok=True, answer="two"),
+        ]
+        judge = {
+            "valid": True,
+            "parsed": {
+                "confidence": 0.5,
+                "contradictions": [],
+                "coverage_gaps": [],
+            },
+        }
+        self.assertIn("low-judge-confidence", fusion.escalation_reasons(panel, judge))
+
 
 if __name__ == "__main__":
     unittest.main()

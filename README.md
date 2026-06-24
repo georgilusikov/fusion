@@ -1,6 +1,6 @@
 # Fusion
 
-Fusion runs several CLI/API models in parallel, filters failed calls, validates a structured judge response, and optionally drafts a final answer.
+Fusion runs several CLI/API models in parallel, filters failed calls, validates a structured judge response, optionally runs a review round or adaptive escalation, and can draft a final answer.
 
 ## Defaults
 
@@ -36,14 +36,20 @@ export FUSION_PRICING_JSON='{"gpt-4o":{"input":5,"output":15}}'
 # cheap, compact panel
 python3 scripts/fusion.py "question" --strategy lite
 
-# broader panel, stronger repair policy, source answers retained for drafting
+# broader panel, review round, stronger repair policy, source answers retained for drafting
 python3 scripts/fusion.py "question" --strategy pro --auto-draft claude
 
-# route by prompt complexity and benchmark results
+# route by prompt complexity and benchmark results; escalate once to power on risk signals
 python3 scripts/fusion.py "question" --strategy adaptive
 ```
 
 An explicit `--preset` or `--panel` overrides automatic panel selection.
+
+## Review and adaptive escalation
+
+`pro` runs a review round by default: two successful backend-diverse panel members revise their answers after the first judge pass, then the judge evaluates the expanded panel again.
+
+`adaptive` can escalate once to the `power` preset when the first pass looks risky: too few successful members, invalid judge JSON, low judge confidence, or substantial contradictions/gaps. Disable this with `--no-escalate`. Explicit `--panel` or `--preset` also disables escalation.
 
 ## Safe agent workspaces
 
