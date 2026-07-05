@@ -13,6 +13,7 @@ from typing import Any, Mapping, Sequence
 
 from .config import PRESETS, DispatchConfig, Member, ModelResult
 from .dispatch import dispatch
+from .draft_gate import run_draft_gate
 from .judge import run_judge
 from .selection import best_panel_result
 from .rounds import combine_unique_results, escalation_reasons, review_round
@@ -272,6 +273,14 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         bundle["draft"] = draft_result.answer
         bundle["draft_result"] = draft_result.to_dict()
         all_results.append(draft_result)
+        if best_result is not None and draft_result.ok and not getattr(args, "no_draft_gate", False):
+            gate = run_draft_gate(judge_member, prompt, best_result, draft_result, config)
+            bundle["draft_original"] = draft_result.answer
+            bundle["draft_gate"] = {key: value for key, value in gate.items() if key != "final_answer"}
+            bundle["draft"] = str(gate["final_answer"])
+            gate_result = gate.get("result")
+            if isinstance(gate_result, dict):
+                all_results.append(ModelResult(**gate_result))
 
     wall_latency_ms = round((time.perf_counter() - started) * 1000)
     bundle["metrics"] = aggregate_metrics(all_results, wall_latency_ms=wall_latency_ms)
