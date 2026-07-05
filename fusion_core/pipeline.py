@@ -14,6 +14,7 @@ from typing import Any, Mapping, Sequence
 from .config import PRESETS, DispatchConfig, Member, ModelResult
 from .dispatch import dispatch
 from .judge import run_judge
+from .selection import best_panel_result
 from .rounds import combine_unique_results, escalation_reasons, review_round
 from .routing import (
     aggregate_metrics, failed_results, load_pricing, parse_member,
@@ -63,18 +64,28 @@ def _draft_prompt(
     judge: Mapping[str, Any],
     panel: Sequence[ModelResult],
     include_panel: bool,
+    best_result: ModelResult | None = None,
 ) -> str:
     judge_text = json.dumps(judge.get("parsed"), ensure_ascii=False, indent=2) if judge.get("valid") else str(judge.get("raw", ""))
+    best_text = ""
+    if best_result is not None:
+        best_text = (
+            f"\n\n## Best source answer to preserve as the base\n"
+            f"### {best_result.label}\n{best_result.answer}\n"
+        )
     panel_text = ""
     if include_panel:
-        panel_text = "\n\n## Source answers\n" + "\n\n".join(
+        panel_text = "\n\n## Other source answers as donor material\n" + "\n\n".join(
             f"### {item.label}\n{item.answer}" for item in successful_results(panel)
+            if best_result is None or item.label != best_result.label
         )
     return (
-        "You are the drafter. Answer the original prompt. Resolve contradictions explicitly, "
-        "fill coverage gaps, and avoid shared blind spots. Do not mention this orchestration.\n\n"
+        "You are the drafter. Answer the original prompt. Use the best source answer as the base. "
+        "Only add donor insights from other answers when they improve correctness, depth, coverage, or actionability. "
+        "Resolve contradictions explicitly, fill coverage gaps, and avoid shared blind spots. "
+        "Do not mention this orchestration.\n\n"
         f"## Original prompt\n{user_prompt}\n\n"
-        f"## Judge analysis\n{judge_text}{panel_text}\n\n"
+        f"## Judge analysis\n{judge_text}{best_text}{panel_text}\n\n"
         "Write the final answer now."
     )
 
@@ -219,6 +230,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
 
     successes = successful_results(panel_results)
     failures = failed_results(panel_results)
+    best_result = best_panel_result(successes, judge)
 
     all_results = list(panel_results)
     judge_result = judge.get("result")
@@ -237,6 +249,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "panel": [item.to_dict() for item in panel_results],
         "successful_panel": [item.label for item in successes],
         "failed_panel": [item.label for item in failures],
+        "best_panel_answer_label": best_result.label if best_result is not None else None,
         "rounds": rounds,
         "judge": judge,
     }
@@ -245,7 +258,13 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     if drafter_member is not None and successes:
         draft_result = dispatch(
             drafter_member,
-            _draft_prompt(prompt, judge, panel_results, include_panel=decision.resolved == "pro"),
+            _draft_prompt(
+                prompt,
+                judge,
+                panel_results,
+                include_panel=decision.resolved == "pro",
+                best_result=best_result,
+            ),
             "one-shot",
             config,
             apply_member_prompt=False,
