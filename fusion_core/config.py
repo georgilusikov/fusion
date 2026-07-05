@@ -111,6 +111,20 @@ STRATEGY_INSTRUCTIONS = {
     ),
 }
 
+SCORE_AXES = ("correctness", "depth", "coverage", "actionability")
+ANSWER_SCORE_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "additionalProperties": False,
+    "required": ["model", *SCORE_AXES, "rationale"],
+    "properties": {
+        "model": {"type": "string"},
+        "correctness": {"type": "number", "minimum": 0, "maximum": 5},
+        "depth": {"type": "number", "minimum": 0, "maximum": 5},
+        "coverage": {"type": "number", "minimum": 0, "maximum": 5},
+        "actionability": {"type": "number", "minimum": 0, "maximum": 5},
+        "rationale": {"type": "string"},
+    },
+}
 JUDGE_SCHEMA: dict[str, Any] = {
     "$schema": "https://json-schema.org/draft/2020-12/schema",
     "$id": "https://example.invalid/fusion/judge.schema.json",
@@ -123,6 +137,9 @@ JUDGE_SCHEMA: dict[str, Any] = {
         "coverage_gaps",
         "unique_insights",
         "blind_spots",
+        "answer_scores",
+        "ranking",
+        "best_answer_label",
         "recommendation",
     ],
     "properties": {
@@ -153,6 +170,9 @@ JUDGE_SCHEMA: dict[str, Any] = {
             },
         },
         "blind_spots": {"type": "array", "items": {"type": "string"}},
+        "answer_scores": {"type": "array", "items": ANSWER_SCORE_SCHEMA},
+        "ranking": {"type": "array", "items": {"type": "string"}},
+        "best_answer_label": {"type": "string"},
         "recommendation": {"type": "string"},
         "confidence": {"type": "number", "minimum": 0, "maximum": 1},
     },
@@ -160,6 +180,8 @@ JUDGE_SCHEMA: dict[str, Any] = {
 
 JUDGE_INSTRUCTION = """You are the judge in a multi-model deliberation.
 Analyze only the successful answers below. Do not merge them into a final answer.
+Score every answer on correctness, depth, coverage, and actionability from 0 to 5.
+Return a ranking and best_answer_label using the exact model labels from the answer headings.
 Return one JSON object matching the supplied JSON Schema. Return JSON only.
 """
 
@@ -263,4 +285,3 @@ class StrategyDecision:
 
     def to_dict(self) -> dict[str, Any]:
         return dataclasses.asdict(self)
-
