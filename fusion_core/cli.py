@@ -56,6 +56,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--auto-draft", metavar="MEMBER", help="run a final drafter member")
     parser.add_argument(
+        "--no-draft-gate",
+        action="store_true",
+        help="disable draft-vs-best anti-regression check after auto-draft",
+    )
+    parser.add_argument(
         "--benchmark-results", default=str(REPO_ROOT / "benchmarks" / "results.json"),
         help="benchmark aggregate used for automatic panel selection",
     )
