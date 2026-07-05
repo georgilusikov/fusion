@@ -9,6 +9,30 @@ from pathlib import Path
 from scripts import fusion
 
 
+def valid_judge_payload() -> dict[str, object]:
+    return {
+        "consensus": ["a"],
+        "contradictions": [{"point": "p", "sides": "a vs b"}],
+        "coverage_gaps": [],
+        "unique_insights": [{"model": "m", "insight": "i"}],
+        "blind_spots": [],
+        "answer_scores": [
+            {
+                "model": "panel",
+                "correctness": 4,
+                "depth": 3,
+                "coverage": 4,
+                "actionability": 5,
+                "rationale": "strongest answer",
+            }
+        ],
+        "ranking": ["panel"],
+        "best_answer_label": "panel",
+        "recommendation": "r",
+        "confidence": 0.8,
+    }
+
+
 class FusionCoreTests(unittest.TestCase):
     def test_defaults_are_single_source_of_truth(self) -> None:
         parser = fusion.build_parser()
@@ -73,31 +97,26 @@ class FusionCoreTests(unittest.TestCase):
         self.assertEqual({item.label for item in fusion.failed_results([good, bad, empty])}, {"bad", "empty"})
 
     def test_judge_schema_validation(self) -> None:
-        valid = {
-            "consensus": ["a"],
-            "contradictions": [{"point": "p", "sides": "a vs b"}],
-            "coverage_gaps": [],
-            "unique_insights": [{"model": "m", "insight": "i"}],
-            "blind_spots": [],
-            "recommendation": "r",
-            "confidence": 0.8,
-        }
+        valid = valid_judge_payload()
         self.assertEqual(fusion.validate_judge_payload(valid), [])
         invalid = dict(valid)
         invalid["extra"] = True
         self.assertTrue(fusion.validate_judge_payload(invalid))
+        missing = dict(valid)
+        missing.pop("best_answer_label")
+        self.assertTrue(fusion.validate_judge_payload(missing))
         external = json.loads((fusion.REPO_ROOT / "schemas" / "judge.schema.json").read_text())
         self.assertEqual(external, fusion.JUDGE_SCHEMA)
 
+    def test_best_panel_result_uses_judge_label(self) -> None:
+        weaker = fusion.ModelResult(label="weak", backend="x", kind="api", ok=True, answer="weak", confidence=0.9)
+        stronger = fusion.ModelResult(label="strong", backend="y", kind="api", ok=True, answer="strong", confidence=0.1)
+        judge = {"parsed": {"best_answer_label": "strong", "ranking": ["strong", "weak"]}}
+        self.assertEqual(fusion.best_panel_result([weaker, stronger], judge), stronger)
+
     def test_judge_repair_loop(self) -> None:
-        valid = {
-            "consensus": [],
-            "contradictions": [],
-            "coverage_gaps": [],
-            "unique_insights": [],
-            "blind_spots": [],
-            "recommendation": "use the valid result",
-        }
+        valid = valid_judge_payload()
+        valid["recommendation"] = "use the valid result"
         answers = iter(["not json", json.dumps(valid)])
 
         def fake_dispatch(member, prompt, depth, config, apply_member_prompt):
