@@ -1,0 +1,10 @@
+{
+  "title": "FusionSelectionResult",
+  "type": "object",
+  "required": ["answer_scores", "ranking", "best_answer_label"],
+  "properties": {
+    "answer_scores": {"type": "array"},
+    "ranking": {"type": "array"},
+    "best_answer_label": {"type": "string"}
+  }
+}
