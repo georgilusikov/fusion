@@ -14,8 +14,9 @@ from typing import Any, Mapping, Sequence
 from .config import PRESETS, DispatchConfig, Member, ModelResult
 from .dispatch import dispatch
 from .draft_gate import run_draft_gate
-from .judge import run_judge
+from .judge_panel import run_judge_panel
 from .selection import best_panel_result
+from .self_consistency import expand_panel_spec
 from .rounds import combine_unique_results, escalation_reasons, review_round
 from .routing import (
     aggregate_metrics, failed_results, load_pricing, parse_member,
@@ -58,6 +59,25 @@ def _run_panel(
     order = {member.label: index for index, member in enumerate(members)}
     panel_results.sort(key=lambda item: order.get(item.label, len(order)))
     return panel_results
+
+
+def _append_model_call_result(payload: Mapping[str, Any], sink: list[ModelResult]) -> None:
+    result = payload.get("result")
+    if isinstance(result, dict):
+        sink.append(ModelResult(**result))
+    for repair in payload.get("repair_results", []):
+        if isinstance(repair, dict):
+            sink.append(ModelResult(**repair))
+
+
+def _append_judge_metrics(judge: Mapping[str, Any], sink: list[ModelResult]) -> None:
+    runs = judge.get("judge_results")
+    if isinstance(runs, list):
+        for run in runs:
+            if isinstance(run, Mapping):
+                _append_model_call_result(run, sink)
+        return
+    _append_model_call_result(judge, sink)
 
 
 def _draft_prompt(
@@ -116,6 +136,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     else:
         assert decision.preset is not None
         panel_spec = PRESETS[decision.preset]
+    panel_spec = expand_panel_spec(panel_spec)
 
     config = DispatchConfig(
         timeout=args.timeout,
@@ -133,6 +154,10 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         if not members:
             raise ValueError("panel is empty")
         judge_member = parse_member(args.judge, same_mode=True, seen={})
+        critic_spec = getattr(args, "critics", None)
+        if critic_spec is None and decision.resolved == "pro":
+            critic_spec = "claude,gemini,codex"
+        judge_members = parse_panel(expand_panel_spec(critic_spec), same_mode=True) if critic_spec else [judge_member]
         drafter_member = parse_member(args.auto_draft, same_mode=True, seen={}) if args.auto_draft else None
     except ValueError as exc:
         return {"error": str(exc), "selection": decision.to_dict()}, 2
@@ -144,13 +169,14 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "panel_spec": panel_spec,
             "members": [dataclasses.asdict(member) for member in members],
             "judge": dataclasses.asdict(judge_member),
+            "judge_members": [dataclasses.asdict(member) for member in judge_members],
             "drafter": dataclasses.asdict(drafter_member) if drafter_member else None,
         }, 0
 
     print(
         f"[fusion] strategy={decision.resolved} source={decision.source} "
         f"preset={decision.preset or 'custom'} members={[member.label for member in members]} "
-        f"judge={judge_member.label}",
+        f"judges={[member.label for member in judge_members]}",
         file=sys.stderr,
     )
 
@@ -164,8 +190,8 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     ]
 
     effective_repairs = max(args.repair_attempts, 2) if decision.resolved == "pro" else args.repair_attempts
-    judge = run_judge(
-        judge_member,
+    judge = run_judge_panel(
+        judge_members,
         prompt,
         successful_results(panel_results),
         config,
@@ -191,8 +217,8 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         )
         panel_results.extend(reviews)
         if successful_results(reviews):
-            judge = run_judge(
-                judge_member,
+            judge = run_judge_panel(
+                judge_members,
                 prompt,
                 successful_results(panel_results),
                 config,
@@ -210,11 +236,11 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     reasons = escalation_reasons(panel_results, judge)
     if args.strategy == "adaptive" and reasons and not args.no_escalate and not explicit_panel:
         print(f"[fusion] adaptive escalation: {', '.join(reasons)}", file=sys.stderr)
-        power_members = parse_panel(PRESETS["power"], same_mode=args.mode == "same")
+        power_members = parse_panel(expand_panel_spec(PRESETS["power"]), same_mode=args.mode == "same")
         escalated = _run_panel(power_members, prompt, args.depth, config)
         panel_results = combine_unique_results(panel_results, escalated)
-        judge = run_judge(
-            judge_member,
+        judge = run_judge_panel(
+            judge_members,
             prompt,
             successful_results(panel_results),
             config,
@@ -234,12 +260,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     best_result = best_panel_result(successes, judge)
 
     all_results = list(panel_results)
-    judge_result = judge.get("result")
-    if isinstance(judge_result, dict):
-        all_results.append(ModelResult(**judge_result))
-    for repair in judge.get("repair_results", []):
-        if isinstance(repair, dict):
-            all_results.append(ModelResult(**repair))
+    _append_judge_metrics(judge, all_results)
 
     bundle: dict[str, Any] = {
         "prompt": prompt,
@@ -274,7 +295,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         bundle["draft_result"] = draft_result.to_dict()
         all_results.append(draft_result)
         if best_result is not None and draft_result.ok and not getattr(args, "no_draft_gate", False):
-            gate = run_draft_gate(judge_member, prompt, best_result, draft_result, config)
+            gate = run_draft_gate(judge_members[0], prompt, best_result, draft_result, config)
             bundle["draft_original"] = draft_result.answer
             bundle["draft_gate"] = {key: value for key, value in gate.items() if key != "final_answer"}
             bundle["draft"] = str(gate["final_answer"])
