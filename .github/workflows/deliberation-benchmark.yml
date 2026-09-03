@@ -23,10 +23,14 @@ on:
         description: "Fusion drafter member spec"
         required: true
         default: "or:anthropic/claude-opus-5"
-      evaluator:
-        description: "Blind external evaluator member spec"
+      evaluators:
+        description: "Comma-separated independent blind evaluator specs"
         required: true
-        default: "or:openai/gpt-5.6-luna"
+        default: "or:openai/gpt-5.6-luna,or:google/gemini-3.1-pro-preview,or:deepseek/deepseek-v4-pro-0813"
+      min_valid_evaluators:
+        description: "Minimum valid evaluators per case"
+        required: true
+        default: "2"
       scouts:
         description: "Deliberation scouts"
         required: true
@@ -73,27 +77,29 @@ jobs:
 
       - name: Validate benchmark configuration
         run: |
-          python scripts/deliberation_benchmark.py \
+          python scripts/multi_eval_benchmark.py \
             --dry-run \
             --limit "${{ inputs.limit }}" \
             --preset "${{ inputs.preset }}" \
             --baseline "${{ inputs.baseline }}" \
             --judge "${{ inputs.judge }}" \
             --drafter "${{ inputs.drafter }}" \
-            --evaluator "${{ inputs.evaluator }}" \
+            --evaluators "${{ inputs.evaluators }}" \
+            --min-valid-evaluators "${{ inputs.min_valid_evaluators }}" \
             --scouts "${{ inputs.scouts }}" \
             --branches "${{ inputs.branches }}" \
             --critics "${{ inputs.critics }}"
 
-      - name: Run blind benchmark
+      - name: Run blind multi-evaluator benchmark
         run: |
-          python scripts/deliberation_benchmark.py \
+          python scripts/multi_eval_benchmark.py \
             --limit "${{ inputs.limit }}" \
             --preset "${{ inputs.preset }}" \
             --baseline "${{ inputs.baseline }}" \
             --judge "${{ inputs.judge }}" \
             --drafter "${{ inputs.drafter }}" \
-            --evaluator "${{ inputs.evaluator }}" \
+            --evaluators "${{ inputs.evaluators }}" \
+            --min-valid-evaluators "${{ inputs.min_valid_evaluators }}" \
             --scouts "${{ inputs.scouts }}" \
             --branches "${{ inputs.branches }}" \
             --critics "${{ inputs.critics }}" \
@@ -124,9 +130,17 @@ jobs:
           data = json.loads(Path("benchmarks/deliberation_results.json").read_text())
           agg = data.get("aggregate", {})
           variants = agg.get("variants", {})
+          panel = agg.get("evaluator_panel", {})
           print("## Deliberation benchmark")
           print()
           print(f"Cases: {agg.get('runs')}  |  Valid blind evaluations: {agg.get('valid_evaluations')}")
+          print(
+              "Evaluator panel: "
+              f"avg agreement={panel.get('avg_agreement')}, "
+              f"unanimous fraction={panel.get('unanimous_fraction')}, "
+              f"avg valid evaluators={panel.get('avg_valid_evaluators')}, "
+              f"avg evaluator cost=${panel.get('avg_evaluator_cost_usd')}"
+          )
           print()
           print("| Variant | Quality | Win rate | Avg calls | Avg latency ms | Avg cost USD |")
           print("|---|---:|---:|---:|---:|---:|")
