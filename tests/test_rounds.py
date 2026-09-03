@@ -148,7 +148,7 @@ class RoundsTests(unittest.TestCase):
         members = [Member("a", "api", "openai", "gpt", "neutral", "neutral")]
         result = panel_item("a", "openai", model="gpt")
         self.assertIs(member_for_result(result, members), members[0])
-        self.assertIs(member_for_result(renamed_result(result, ":revision"), members[0])
+        self.assertIs(member_for_result(renamed_result(result, ":revision"), members), members[0])
 
 
 if __name__ == "__main__":
