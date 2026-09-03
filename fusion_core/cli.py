@@ -48,6 +48,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="maximum deliberation scout operators when --deliberation on (default: 4, max: 8)",
     )
     parser.add_argument(
+        "--deliberation-critics",
+        type=int,
+        default=2,
+        help="targeted candidate-pool critics when --deliberation on (default: 2, max: 4)",
+    )
+    parser.add_argument(
         "--agent-workspace", choices=["temp", "snapshot", "worktree"],
         default=DEFAULT_AGENT_WORKSPACE,
         help="isolated agent workspace; direct current-directory execution is not supported",
@@ -98,6 +104,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("reviewers must be non-negative")
     if args.scouts < 0 or args.scouts > 8:
         parser.error("scouts must be from 0 to 8")
+    if args.deliberation_critics < 0 or args.deliberation_critics > 4:
+        parser.error("deliberation-critics must be from 0 to 4")
     bundle, exit_code = run_fusion(args)
     print(json.dumps(bundle, ensure_ascii=False, indent=2))
     return exit_code
