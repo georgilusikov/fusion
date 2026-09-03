@@ -78,7 +78,7 @@ class EvaluatorPanelTests(unittest.TestCase):
 
     def test_strict_majority_allows_one_invalid_evaluator(self) -> None:
         def fake_dispatch(member, prompt, depth, config, apply_member_prompt):
-            invalid = member.model == "broken"
+            invalid = str(member.model or "").endswith("/broken")
             return ModelResult(
                 label=member.label,
                 backend=member.backend,
@@ -103,7 +103,7 @@ class EvaluatorPanelTests(unittest.TestCase):
 
     def test_panel_fails_without_required_evaluator_majority(self) -> None:
         def fake_dispatch(member, prompt, depth, config, apply_member_prompt):
-            valid = member.model == "good"
+            valid = str(member.model or "").endswith("/good")
             return ModelResult(
                 label=member.label,
                 backend=member.backend,
