@@ -18,7 +18,11 @@ from fusion_core.deliberation_benchmark import (  # noqa: E402
     aggregate_deliberation_runs,
     load_deliberation_cases,
 )
-from fusion_core.multi_eval_benchmark import parse_evaluator_specs, run_multi_eval_case  # noqa: E402
+from fusion_core.multi_eval_benchmark import (  # noqa: E402
+    aggregate_evaluator_diagnostics,
+    parse_evaluator_specs,
+    run_multi_eval_case,
+)
 from fusion_core.routing import load_dotenv  # noqa: E402
 
 DEFAULT_EVALUATORS = (
@@ -126,9 +130,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         runs.append(run)
 
+    aggregate = aggregate_deliberation_runs(runs)
+    aggregate["evaluator_panel"] = aggregate_evaluator_diagnostics(runs)
     payload = {
         "config": config,
-        "aggregate": aggregate_deliberation_runs(runs),
+        "aggregate": aggregate,
         "runs": runs,
     }
     output = Path(args.output)
