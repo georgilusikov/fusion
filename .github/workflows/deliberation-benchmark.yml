@@ -39,6 +39,14 @@ on:
         description: "Targeted critics"
         required: true
         default: "2"
+      min_quality_delta:
+        description: "Minimum quality gain on the 0..5 scale for PROMOTE"
+        required: true
+        default: "0.10"
+      min_win_rate_delta:
+        description: "Minimum blind win-rate gain for PROMOTE"
+        required: true
+        default: "0.05"
 
 permissions:
   contents: read
@@ -91,6 +99,15 @@ jobs:
             --critics "${{ inputs.critics }}" \
             --output benchmarks/deliberation_results.json
 
+      - name: Evaluate promotion gate
+        if: success()
+        run: |
+          python scripts/deliberation_gate.py \
+            benchmarks/deliberation_results.json \
+            --min-quality-delta "${{ inputs.min_quality_delta }}" \
+            --min-win-rate-delta "${{ inputs.min_win_rate_delta }}" \
+            > benchmarks/deliberation_gate.json
+
       - name: Write benchmark summary
         if: always()
         shell: bash
@@ -123,13 +140,29 @@ jobs:
               )
           print()
           print(f"Deliberation quality delta vs current Fusion: {agg.get('deliberation_quality_delta')}")
+
+          gate_path = Path("benchmarks/deliberation_gate.json")
+          if gate_path.exists():
+              gate = json.loads(gate_path.read_text())
+              print()
+              print(f"### Promotion gate: **{gate.get('status', 'UNKNOWN')}**")
+              failed = [name for name, row in gate.get('checks', {}).items() if not row.get('passed')]
+              if failed:
+                  print("Failed checks: " + ", ".join(failed))
+              metrics = gate.get("metrics", {})
+              print(
+                  "Efficiency ratios (report-only unless explicitly gated): "
+                  f"latency={metrics.get('latency_ratio')}, cost={metrics.get('cost_ratio')}"
+              )
           PY
 
-      - name: Upload benchmark artifact
+      - name: Upload benchmark artifacts
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: deliberation-benchmark-${{ github.run_id }}
-          path: benchmarks/deliberation_results.json
+          path: |
+            benchmarks/deliberation_results.json
+            benchmarks/deliberation_gate.json
           if-no-files-found: warn
           retention-days: 30
