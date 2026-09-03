@@ -211,6 +211,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         repair_attempts=effective_repairs,
         blind=blind_judge,
     )
+    judge_history: list[Mapping[str, Any]] = [judge]
     rounds[0]["judge_valid"] = bool(judge.get("valid"))
 
     deliberation_bundle: dict[str, Any] | None = None
@@ -277,6 +278,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 repair_attempts=effective_repairs,
                 blind=blind_judge,
             )
+            judge_history.append(judge)
         rounds.append(
             {
                 "name": "review",
@@ -301,6 +303,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             repair_attempts=effective_repairs,
             blind=blind_judge,
         )
+        judge_history.append(judge)
         rounds.append(
             {
                 "name": "adaptive-escalation",
@@ -315,7 +318,8 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     best_result = best_panel_result(successes, judge)
 
     all_results = list(panel_results) + deliberation_results
-    _append_judge_metrics(judge, all_results)
+    for judge_round in judge_history:
+        _append_judge_metrics(judge_round, all_results)
 
     bundle: dict[str, Any] = {
         "prompt": prompt,
@@ -331,6 +335,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "best_panel_answer_label": best_result.label if best_result is not None else None,
         "rounds": rounds,
         "judge": judge,
+        "judge_round_count": len(judge_history),
     }
     if deliberation_bundle is not None:
         bundle["deliberation"] = deliberation_bundle
