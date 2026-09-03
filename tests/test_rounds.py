@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import threading
+import time
 import unittest
 
 from fusion_core.config import Member, ModelResult
@@ -83,9 +85,11 @@ class RoundsTests(unittest.TestCase):
             panel_item("b", "anthropic", answer="first-b", confidence=0.8, model="sonnet"),
         ]
         prompts: list[str] = []
+        prompt_lock = threading.Lock()
 
         def fake_dispatch(member, prompt, depth, config, apply_member_prompt):
-            prompts.append(prompt)
+            with prompt_lock:
+                prompts.append(prompt)
             return panel_item(member.label, member.backend, answer=f"revised-{member.label}", model=member.model)
 
         reviews = review_round(
@@ -99,14 +103,52 @@ class RoundsTests(unittest.TestCase):
             dispatcher=fake_dispatch,
         )
         self.assertEqual(len(reviews), 2)
-        self.assertTrue(all(item.label.endswith(":revision") for item in reviews))
+        self.assertEqual([item.label for item in reviews], ["a:revision", "b:revision"])
         self.assertIn("Judge analysis", prompts[0])
+
+    def test_review_round_runs_reviewers_concurrently(self) -> None:
+        members = [
+            Member("a", "api", "openai", "gpt", "neutral", "neutral"),
+            Member("b", "api", "anthropic", "sonnet", "neutral", "neutral"),
+            Member("c", "api", "google", "gemini", "neutral", "neutral"),
+        ]
+        panel = [
+            panel_item("a", "openai", confidence=0.9, model="gpt"),
+            panel_item("b", "anthropic", confidence=0.8, model="sonnet"),
+            panel_item("c", "google", confidence=0.7, model="gemini"),
+        ]
+        lock = threading.Lock()
+        active = 0
+        max_active = 0
+
+        def fake_dispatch(member, prompt, depth, config, apply_member_prompt):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+            return panel_item(member.label, member.backend, answer=f"revised-{member.label}", model=member.model)
+
+        reviews = review_round(
+            "question",
+            members,
+            panel,
+            {"parsed": {"consensus": ["x"]}},
+            "one-shot",
+            object(),
+            3,
+            dispatcher=fake_dispatch,
+        )
+        self.assertEqual(len(reviews), 3)
+        self.assertGreaterEqual(max_active, 2)
 
     def test_member_for_result_matches_label_then_backend(self) -> None:
         members = [Member("a", "api", "openai", "gpt", "neutral", "neutral")]
         result = panel_item("a", "openai", model="gpt")
         self.assertIs(member_for_result(result, members), members[0])
-        self.assertIs(member_for_result(renamed_result(result, ":revision"), members), members[0])
+        self.assertIs(member_for_result(renamed_result(result, ":revision"), members[0])
 
 
 if __name__ == "__main__":
