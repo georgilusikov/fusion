@@ -31,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=["role", "same"], default="role")
     parser.add_argument("--depth", choices=["one-shot", "agent"], default="one-shot")
     parser.add_argument(
+        "--blind-judge",
+        action="store_true",
+        help="hide panel model/provider identities from judges and shuffle candidate order",
+    )
+    parser.add_argument(
         "--agent-workspace", choices=["temp", "snapshot", "worktree"],
         default=DEFAULT_AGENT_WORKSPACE,
         help="isolated agent workspace; direct current-directory execution is not supported",
