@@ -85,10 +85,20 @@ def validate_judge_payload(payload: Mapping[str, Any] | None) -> list[str]:
     return errors
 
 
-def _judge_prompt(user_prompt: str, panel: Sequence[ModelResult]) -> str:
-    answers = "\n\n".join(
-        f"### Model: {item.label} ({item.backend})\n{item.answer}" for item in panel
-    )
+def _judge_prompt(
+    user_prompt: str,
+    panel: Sequence[ModelResult],
+    *,
+    blind: bool = False,
+) -> str:
+    if blind:
+        answers = "\n\n".join(
+            f"### Candidate: {item.label}\n{item.answer}" for item in panel
+        )
+    else:
+        answers = "\n\n".join(
+            f"### Model: {item.label} ({item.backend})\n{item.answer}" for item in panel
+        )
     return (
         f"{JUDGE_INSTRUCTION}\n\n"
         f"## JSON Schema\n{json.dumps(JUDGE_SCHEMA, ensure_ascii=False, indent=2)}\n\n"
@@ -117,6 +127,8 @@ def run_judge(
     config: DispatchConfig,
     repair_attempts: int = DEFAULT_REPAIR_ATTEMPTS,
     dispatcher: JudgeDispatcher = dispatch,
+    *,
+    blind: bool = False,
 ) -> dict[str, Any]:
     valid_panel = successful_results(panel)
     if not valid_panel:
@@ -134,7 +146,7 @@ def run_judge(
 
     neutral = dataclasses.replace(judge_member, role_key="neutral", role_text=ROLES["neutral"], depth=None)
     results: list[ModelResult] = []
-    current_prompt = _judge_prompt(user_prompt, valid_panel)
+    current_prompt = _judge_prompt(user_prompt, valid_panel, blind=blind)
     parsed: dict[str, Any] | None = None
     validation_errors: list[str] = []
 
@@ -160,5 +172,3 @@ def run_judge(
         "result": final.to_dict(),
         "repair_results": [item.to_dict() for item in results[:-1]],
     }
-
-
