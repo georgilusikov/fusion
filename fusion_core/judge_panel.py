@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import statistics
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Mapping, Sequence
 
 from .config import DispatchConfig, Member, ModelResult, SCORE_AXES
@@ -113,7 +114,15 @@ def run_judge_panel(
     members = list(judge_members)
     if not members:
         raise ValueError("judge panel is empty")
-    results = [run_judge(member, user_prompt, panel, config, repair_attempts=repair_attempts) for member in members]
+    if len(members) == 1:
+        results = [run_judge(members[0], user_prompt, panel, config, repair_attempts=repair_attempts)]
+    else:
+        with ThreadPoolExecutor(max_workers=len(members)) as executor:
+            futures = [
+                executor.submit(run_judge, member, user_prompt, panel, config, repair_attempts)
+                for member in members
+            ]
+            results = [future.result() for future in futures]
     valid_payloads = [item["parsed"] for item in results if item.get("valid") and isinstance(item.get("parsed"), Mapping)]
     if len(members) == 1:
         single = dict(results[0])
