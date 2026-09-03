@@ -7,8 +7,10 @@ import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Mapping, Sequence
 
+from .branching import run_branch_expansions
 from .candidate_pool import build_candidate_pool, render_candidate_pool, validate_scout_payload
 from .config import DispatchConfig, Member, ModelResult
+from .critics import run_targeted_critics
 from .dispatch import dispatch
 from .judge import extract_json
 from .operators import OperatorSpec, plan_operators
@@ -31,11 +33,7 @@ def _judge_brief(judge: Mapping[str, Any] | None) -> str:
     return json.dumps(compact, ensure_ascii=False, indent=2)
 
 
-def scout_prompt(
-    user_prompt: str,
-    operator: OperatorSpec,
-    judge: Mapping[str, Any] | None,
-) -> str:
+def scout_prompt(user_prompt: str, operator: OperatorSpec, judge: Mapping[str, Any] | None) -> str:
     return (
         "You are a deliberation scout. Explore only the assigned operator. "
         "Do not write a polished final answer and do not reveal private chain-of-thought. "
@@ -103,13 +101,7 @@ def run_scouts(
     results: list[ModelResult | None] = [None] * len(assignments)
 
     def run_one(index: int, operator: OperatorSpec, member: Member) -> None:
-        raw_result = dispatcher(
-            member,
-            scout_prompt(prompt, operator, judge),
-            depth,
-            config,
-            False,
-        )
+        raw_result = dispatcher(member, scout_prompt(prompt, operator, judge), depth, config, False)
         result = dataclasses.replace(
             raw_result,
             label=f"{member.label}:scout:{operator.key}",
@@ -129,17 +121,11 @@ def run_scouts(
         results[index] = result
 
     with ThreadPoolExecutor(max_workers=max(1, len(assignments))) as executor:
-        futures = [
-            executor.submit(run_one, index, operator, member)
-            for index, (operator, member) in enumerate(assignments)
-        ]
+        futures = [executor.submit(run_one, index, operator, member) for index, (operator, member) in enumerate(assignments)]
         for future in as_completed(futures):
             future.result()
 
-    return (
-        [row for row in rows if row is not None],
-        [result for result in results if result is not None],
-    )
+    return [row for row in rows if row is not None], [result for result in results if result is not None]
 
 
 def run_deliberation(
@@ -150,9 +136,11 @@ def run_deliberation(
     depth: str,
     *,
     max_operators: int = 4,
+    branch_count: int = 0,
+    critic_count: int = 0,
     dispatcher: ScoutDispatcher = dispatch,
 ) -> tuple[dict[str, Any], list[ModelResult]]:
-    scouts, results = run_scouts(
+    scouts, scout_results = run_scouts(
         prompt,
         members,
         judge,
@@ -162,9 +150,36 @@ def run_deliberation(
         dispatcher=dispatcher,
     )
     pool = build_candidate_pool(scouts)
+    pool_context = render_candidate_pool(pool)
+
+    branches, branch_results = run_branch_expansions(
+        prompt,
+        pool,
+        members,
+        config,
+        depth,
+        count=branch_count,
+        dispatcher=dispatcher,
+    )
+    branch_context = str(branches.get("context") or "")
+
+    critique, critic_results = run_targeted_critics(
+        prompt,
+        pool,
+        members,
+        config,
+        depth,
+        count=critic_count,
+        expansion_context=branch_context or None,
+        dispatcher=dispatcher,
+    )
+    critique_context = str(critique.get("context") or "")
+    donor_context = "\n\n".join(part for part in (pool_context, branch_context, critique_context) if part.strip())
     return {
         "operators": [row["operator"] for row in scouts],
         "scouts": scouts,
         "pool": pool,
-        "donor_context": render_candidate_pool(pool),
-    }, results
+        "branches": branches,
+        "critique": critique,
+        "donor_context": donor_context,
+    }, scout_results + branch_results + critic_results

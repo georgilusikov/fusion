@@ -11,4 +11,6 @@ from .orchestration import *
 from .rounds import *
 from .operators import *
 from .candidate_pool import *
+from .branching import *
+from .critics import *
 from .deliberation import *

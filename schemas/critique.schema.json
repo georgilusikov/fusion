@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/fusion/critique.schema.json",
+  "title": "FusionTargetedCritique",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["summary", "findings"],
+  "properties": {
+    "summary": {"type": "string"},
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["target", "objection", "severity", "hidden_assumptions", "missing_evidence"],
+        "properties": {
+          "target": {"type": "string", "minLength": 1},
+          "objection": {"type": "string", "minLength": 1},
+          "severity": {"type": "number", "minimum": 0, "maximum": 1},
+          "hidden_assumptions": {"type": "array", "items": {"type": "string"}},
+          "missing_evidence": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}
