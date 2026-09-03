@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import json
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Mapping, Sequence
 
 from .config import Member, ModelResult
@@ -86,8 +87,8 @@ def review_round(
     log: Callable[[str], None] | None = None,
 ) -> list[ModelResult]:
     logger = log or (lambda _: None)
-    reviews: list[ModelResult] = []
     judge_json = json.dumps(judge.get("parsed") or judge.get("raw") or {}, ensure_ascii=False, indent=2)
+    work: list[tuple[Member, str]] = []
     for prior in choose_reviewers(panel, count):
         member = member_for_result(prior, members)
         if member is None:
@@ -100,10 +101,24 @@ def review_round(
             f"Your first answer:\n{prior.answer}\n\n"
             f"Judge analysis:\n{judge_json}\n"
         )
+        work.append((member, review_prompt))
+
+    if not work:
+        return []
+
+    def run(item: tuple[Member, str]) -> ModelResult:
+        member, review_prompt = item
         revised = dispatcher(member, review_prompt, depth, config, False)
-        revised = renamed_result(revised, ":revision")
+        return renamed_result(revised, ":revision")
+
+    if len(work) == 1:
+        reviews = [run(work[0])]
+    else:
+        with ThreadPoolExecutor(max_workers=len(work)) as executor:
+            reviews = list(executor.map(run, work))
+
+    for revised in reviews:
         logger(f"review {revised.label}: {'ok' if revised.ok else 'FAIL'}")
-        reviews.append(revised)
     return reviews
 
 
