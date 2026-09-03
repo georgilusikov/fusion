@@ -1,0 +1,32 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/fusion/candidate-pool.schema.json",
+  "title": "FusionCandidatePool",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["candidate_count", "valid_scouts", "candidates"],
+  "properties": {
+    "candidate_count": {"type": "integer", "minimum": 0},
+    "valid_scouts": {"type": "integer", "minimum": 0},
+    "candidates": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "type", "claim", "why_it_matters", "assumptions", "evidence_needed", "parent", "horizon", "source_ids", "operators"],
+        "properties": {
+          "id": {"type": "string"},
+          "type": {"enum": ["solution", "cause", "risk", "assumption", "consequence"]},
+          "claim": {"type": "string", "minLength": 1},
+          "why_it_matters": {"type": "string"},
+          "assumptions": {"type": "array", "items": {"type": "string"}},
+          "evidence_needed": {"type": "array", "items": {"type": "string"}},
+          "parent": {"type": ["string", "null"]},
+          "horizon": {"type": "integer", "minimum": 0, "maximum": 3},
+          "source_ids": {"type": "array", "items": {"type": "string"}},
+          "operators": {"type": "array", "items": {"type": "string"}}
+        }
+      }
+    }
+  }
+}

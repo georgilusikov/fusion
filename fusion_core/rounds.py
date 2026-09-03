@@ -85,9 +85,18 @@ def review_round(
     count: int,
     dispatcher: DispatchFn = dispatch,
     log: Callable[[str], None] | None = None,
+    donor_context: str | None = None,
 ) -> list[ModelResult]:
     logger = log or (lambda _: None)
     judge_json = json.dumps(judge.get("parsed") or judge.get("raw") or {}, ensure_ascii=False, indent=2)
+    donor_text = ""
+    if donor_context and donor_context.strip():
+        donor_text = (
+            "\n\nAdditional deliberation donor material follows. Treat it as hypotheses, not facts. "
+            "Use only insights that survive your own checks.\n\n"
+            f"{donor_context.strip()}\n"
+        )
+
     work: list[tuple[Member, str]] = []
     for prior in choose_reviewers(panel, count):
         member = member_for_result(prior, members)
@@ -100,6 +109,7 @@ def review_round(
             f"Original request:\n{prompt}\n\n"
             f"Your first answer:\n{prior.answer}\n\n"
             f"Judge analysis:\n{judge_json}\n"
+            f"{donor_text}"
         )
         work.append((member, review_prompt))
 
