@@ -36,6 +36,18 @@ def build_parser() -> argparse.ArgumentParser:
         help="hide panel model/provider identities from judges and shuffle candidate order",
     )
     parser.add_argument(
+        "--deliberation",
+        choices=["off", "on"],
+        default="off",
+        help="run experimental operator scouts and feed their candidate pool into review revisions",
+    )
+    parser.add_argument(
+        "--scouts",
+        type=int,
+        default=4,
+        help="maximum deliberation scout operators when --deliberation on (default: 4, max: 8)",
+    )
+    parser.add_argument(
         "--agent-workspace", choices=["temp", "snapshot", "worktree"],
         default=DEFAULT_AGENT_WORKSPACE,
         help="isolated agent workspace; direct current-directory execution is not supported",
@@ -84,6 +96,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("timeout must be positive; retries, repair-attempts, and backoff must be non-negative")
     if args.reviewers is not None and args.reviewers < 0:
         parser.error("reviewers must be non-negative")
+    if args.scouts < 0 or args.scouts > 8:
+        parser.error("scouts must be from 0 to 8")
     bundle, exit_code = run_fusion(args)
     print(json.dumps(bundle, ensure_ascii=False, indent=2))
     return exit_code
