@@ -5,8 +5,10 @@ from __future__ import annotations
 import json
 import statistics
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Mapping, Sequence
 
+from .blind_judge import anonymize_panel, restore_labels
 from .config import DispatchConfig, Member, ModelResult, SCORE_AXES
 from .judge import run_judge, validate_judge_payload
 
@@ -103,28 +105,90 @@ def aggregate_judge_payloads(payloads: Sequence[Mapping[str, Any]]) -> dict[str,
     return aggregate if not validate_judge_payload(aggregate) else None
 
 
+def _run_one_judge(
+    member: Member,
+    index: int,
+    user_prompt: str,
+    panel: Sequence[ModelResult],
+    config: DispatchConfig,
+    repair_attempts: int,
+    blind: bool,
+) -> dict[str, Any]:
+    if not blind:
+        return run_judge(member, user_prompt, panel, config, repair_attempts=repair_attempts)
+
+    candidate_panel, candidate_map = anonymize_panel(panel, order_seed=index)
+    result = run_judge(
+        member,
+        user_prompt,
+        candidate_panel,
+        config,
+        repair_attempts=repair_attempts,
+        blind=True,
+    )
+    parsed = result.get("parsed")
+    if result.get("valid") and isinstance(parsed, Mapping):
+        restored = restore_labels(parsed, candidate_map)
+        if isinstance(restored, dict) and not validate_judge_payload(restored):
+            result = dict(result)
+            result["parsed"] = restored
+    result = dict(result)
+    result["blind"] = True
+    result["candidate_map"] = candidate_map
+    return result
+
+
 def run_judge_panel(
     judge_members: Sequence[Member],
     user_prompt: str,
     panel: Sequence[ModelResult],
     config: DispatchConfig,
     repair_attempts: int,
+    *,
+    blind: bool = False,
 ) -> dict[str, Any]:
     members = list(judge_members)
     if not members:
         raise ValueError("judge panel is empty")
-    results = [run_judge(member, user_prompt, panel, config, repair_attempts=repair_attempts) for member in members]
+    if len(members) == 1:
+        results = [_run_one_judge(members[0], 0, user_prompt, panel, config, repair_attempts, blind)]
+    else:
+        with ThreadPoolExecutor(max_workers=len(members)) as executor:
+            futures = [
+                executor.submit(
+                    _run_one_judge,
+                    member,
+                    index,
+                    user_prompt,
+                    panel,
+                    config,
+                    repair_attempts,
+                    blind,
+                )
+                for index, member in enumerate(members)
+            ]
+            results = [future.result() for future in futures]
     valid_payloads = [item["parsed"] for item in results if item.get("valid") and isinstance(item.get("parsed"), Mapping)]
     if len(members) == 1:
         single = dict(results[0])
         single["judge_results"] = results
-        single["aggregation"] = {"mode": "single", "valid_count": len(valid_payloads), "judge_count": 1}
+        single["aggregation"] = {
+            "mode": "single",
+            "valid_count": len(valid_payloads),
+            "judge_count": 1,
+            "blind": blind,
+        }
         return single
     aggregate = aggregate_judge_payloads(valid_payloads)
     if aggregate is None:
         fallback = dict(results[0])
         fallback["judge_results"] = results
-        fallback["aggregation"] = {"mode": "panel", "valid_count": len(valid_payloads), "judge_count": len(members)}
+        fallback["aggregation"] = {
+            "mode": "panel",
+            "valid_count": len(valid_payloads),
+            "judge_count": len(members),
+            "blind": blind,
+        }
         return fallback
     return {
         "backend": "judge-panel",
@@ -137,5 +201,10 @@ def run_judge_panel(
         "result": None,
         "repair_results": [],
         "judge_results": results,
-        "aggregation": {"mode": "panel", "valid_count": len(valid_payloads), "judge_count": len(members)},
+        "aggregation": {
+            "mode": "panel",
+            "valid_count": len(valid_payloads),
+            "judge_count": len(members),
+            "blind": blind,
+        },
     }

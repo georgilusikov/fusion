@@ -31,6 +31,35 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mode", choices=["role", "same"], default="role")
     parser.add_argument("--depth", choices=["one-shot", "agent"], default="one-shot")
     parser.add_argument(
+        "--blind-judge",
+        action="store_true",
+        help="hide panel model/provider identities from judges and shuffle candidate order",
+    )
+    parser.add_argument(
+        "--deliberation",
+        choices=["off", "on"],
+        default="off",
+        help="run experimental operator scouts and feed their candidate pool into review revisions",
+    )
+    parser.add_argument(
+        "--scouts",
+        type=int,
+        default=4,
+        help="maximum deliberation scout operators when --deliberation on (default: 4, max: 8)",
+    )
+    parser.add_argument(
+        "--branch-expansions",
+        type=int,
+        default=3,
+        help="bounded candidate branches to expand when --deliberation on (default: 3, max: 4)",
+    )
+    parser.add_argument(
+        "--deliberation-critics",
+        type=int,
+        default=2,
+        help="targeted candidate-pool critics when --deliberation on (default: 2, max: 4)",
+    )
+    parser.add_argument(
         "--agent-workspace", choices=["temp", "snapshot", "worktree"],
         default=DEFAULT_AGENT_WORKSPACE,
         help="isolated agent workspace; direct current-directory execution is not supported",
@@ -79,6 +108,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("timeout must be positive; retries, repair-attempts, and backoff must be non-negative")
     if args.reviewers is not None and args.reviewers < 0:
         parser.error("reviewers must be non-negative")
+    if args.scouts < 0 or args.scouts > 8:
+        parser.error("scouts must be from 0 to 8")
+    if args.branch_expansions < 0 or args.branch_expansions > 4:
+        parser.error("branch-expansions must be from 0 to 4")
+    if args.deliberation_critics < 0 or args.deliberation_critics > 4:
+        parser.error("deliberation-critics must be from 0 to 4")
     bundle, exit_code = run_fusion(args)
     print(json.dumps(bundle, ensure_ascii=False, indent=2))
     return exit_code

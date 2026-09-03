@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+import threading
+import time
 import unittest
+from unittest.mock import patch
 
-from fusion_core.judge_panel import aggregate_judge_payloads
+from fusion_core.config import Member, ModelResult
+from fusion_core.judge_panel import aggregate_judge_payloads, run_judge_panel
 from fusion_core.self_consistency import expand_panel_spec
 
 
@@ -30,6 +34,34 @@ def payload(label: str, score: int) -> dict[str, object]:
     }
 
 
+def full_payload(labels: list[str]) -> dict[str, object]:
+    rows = []
+    for index, label in enumerate(labels):
+        score = 5 - index
+        rows.append(
+            {
+                "model": label,
+                "correctness": score,
+                "depth": score,
+                "coverage": score,
+                "actionability": score,
+                "rationale": f"{label} rationale",
+            }
+        )
+    return {
+        "consensus": [f"{labels[0]} is strongest"],
+        "contradictions": [],
+        "coverage_gaps": [],
+        "unique_insights": [{"model": labels[0], "insight": f"{labels[0]} unique"}],
+        "blind_spots": [],
+        "answer_scores": rows,
+        "ranking": labels,
+        "best_answer_label": labels[0],
+        "recommendation": f"use {labels[0]}",
+        "confidence": 0.8,
+    }
+
+
 class PanelFeatureTests(unittest.TestCase):
     def test_expand_panel_spec_samples(self) -> None:
         self.assertEqual(expand_panel_spec("claude*3,gemini@expert"), "claude,claude,claude,gemini@expert")
@@ -42,6 +74,103 @@ class PanelFeatureTests(unittest.TestCase):
         rows = {row["model"]: row for row in aggregate["answer_scores"]}
         self.assertEqual(rows["a"]["correctness"], 4.0)
         self.assertEqual(aggregate["best_answer_label"], "a")
+
+    def test_blind_judge_restores_original_labels_and_hides_provider(self) -> None:
+        judges = [
+            Member("judge-a", "api", "anthropic", "sonnet", "neutral", "neutral"),
+            Member("judge-b", "api", "google", "gemini", "neutral", "neutral"),
+        ]
+        panel = [
+            ModelResult(label="model-a", backend="openai", kind="api", ok=True, answer="answer-a"),
+            ModelResult(label="model-b", backend="anthropic", kind="api", ok=True, answer="answer-b"),
+        ]
+        seen_orders: list[list[str]] = []
+        seen_lock = threading.Lock()
+
+        def fake_run_judge(member, user_prompt, judge_panel, config, repair_attempts=1, *, blind=False):
+            self.assertTrue(blind)
+            self.assertTrue(all(item.backend == "hidden" and item.model is None for item in judge_panel))
+            labels = [item.label for item in judge_panel]
+            with seen_lock:
+                seen_orders.append(labels)
+            canonical = sorted(labels)
+            parsed = full_payload(canonical)
+            return {
+                "backend": member.backend,
+                "model": member.model,
+                "raw": "blind",
+                "parsed": parsed,
+                "valid": True,
+                "validation_errors": [],
+                "attempts": 1,
+                "result": None,
+                "repair_results": [],
+            }
+
+        with patch("fusion_core.judge_panel.run_judge", side_effect=fake_run_judge):
+            result = run_judge_panel(
+                judges,
+                "question",
+                panel,
+                object(),
+                repair_attempts=0,
+                blind=True,
+            )
+
+        self.assertTrue(result["valid"])
+        self.assertTrue(result["aggregation"]["blind"])
+        self.assertEqual(result["parsed"]["best_answer_label"], "model-a")
+        self.assertEqual(
+            {row["model"] for row in result["parsed"]["answer_scores"]},
+            {"model-a", "model-b"},
+        )
+        self.assertEqual(len(seen_orders), 2)
+        self.assertEqual({tuple(sorted(order)) for order in seen_orders}, {("Candidate A", "Candidate B")})
+
+    def test_judge_panel_runs_multiple_judges_concurrently(self) -> None:
+        judges = [
+            Member(f"judge-{index}", "api", f"backend-{index}", f"model-{index}", "neutral", "neutral")
+            for index in range(3)
+        ]
+        panel = [
+            ModelResult(label="answer", backend="openai", kind="api", ok=True, answer="answer"),
+        ]
+        lock = threading.Lock()
+        active = 0
+        max_active = 0
+
+        def fake_run_judge(member, user_prompt, judge_panel, config, repair_attempts=1, *, blind=False):
+            nonlocal active, max_active
+            with lock:
+                active += 1
+                max_active = max(max_active, active)
+            time.sleep(0.05)
+            with lock:
+                active -= 1
+            parsed = full_payload(["answer"])
+            return {
+                "backend": member.backend,
+                "model": member.model,
+                "raw": "ok",
+                "parsed": parsed,
+                "valid": True,
+                "validation_errors": [],
+                "attempts": 1,
+                "result": None,
+                "repair_results": [],
+            }
+
+        with patch("fusion_core.judge_panel.run_judge", side_effect=fake_run_judge):
+            result = run_judge_panel(
+                judges,
+                "question",
+                panel,
+                object(),
+                repair_attempts=0,
+            )
+
+        self.assertTrue(result["valid"])
+        self.assertGreaterEqual(max_active, 2)
 
 
 if __name__ == "__main__":
