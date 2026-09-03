@@ -121,6 +121,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     blind_judge = bool(getattr(args, "blind_judge", False))
     deliberation_mode = str(getattr(args, "deliberation", "off"))
     max_scouts = int(getattr(args, "scouts", 4))
+    branch_expansions = int(getattr(args, "branch_expansions", 3))
     deliberation_critics = int(getattr(args, "deliberation_critics", 2))
 
     benchmark_path = Path(args.benchmark_results).expanduser() if args.benchmark_results else None
@@ -179,6 +180,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "blind_judge": blind_judge,
             "deliberation": deliberation_mode,
             "scouts": max_scouts,
+            "branch_expansions": branch_expansions,
             "deliberation_critics": deliberation_critics,
             "drafter": dataclasses.asdict(drafter_member) if drafter_member else None,
         }, 0
@@ -222,10 +224,12 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             config,
             args.depth,
             max_operators=max_scouts,
+            branch_count=branch_expansions,
             critic_count=deliberation_critics,
         )
         donor_context = str(deliberation_bundle.get("donor_context") or "")
         pool = deliberation_bundle.get("pool") or {}
+        branches = deliberation_bundle.get("branches") or {}
         critique = deliberation_bundle.get("critique") or {}
         rounds.append(
             {
@@ -233,6 +237,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 "operators": list(deliberation_bundle.get("operators") or []),
                 "candidate_count": int(pool.get("candidate_count") or 0) if isinstance(pool, Mapping) else 0,
                 "valid_scouts": int(pool.get("valid_scouts") or 0) if isinstance(pool, Mapping) else 0,
+                "valid_expansions": int(branches.get("valid_expansions") or 0) if isinstance(branches, Mapping) else 0,
                 "valid_critics": int(critique.get("valid_critics") or 0) if isinstance(critique, Mapping) else 0,
             }
         )
