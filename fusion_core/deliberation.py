@@ -9,6 +9,7 @@ from typing import Any, Callable, Mapping, Sequence
 
 from .candidate_pool import build_candidate_pool, render_candidate_pool, validate_scout_payload
 from .config import DispatchConfig, Member, ModelResult
+from .critics import run_targeted_critics
 from .dispatch import dispatch
 from .judge import extract_json
 from .operators import OperatorSpec, plan_operators
@@ -150,9 +151,10 @@ def run_deliberation(
     depth: str,
     *,
     max_operators: int = 4,
+    critic_count: int = 0,
     dispatcher: ScoutDispatcher = dispatch,
 ) -> tuple[dict[str, Any], list[ModelResult]]:
-    scouts, results = run_scouts(
+    scouts, scout_results = run_scouts(
         prompt,
         members,
         judge,
@@ -162,9 +164,24 @@ def run_deliberation(
         dispatcher=dispatcher,
     )
     pool = build_candidate_pool(scouts)
+    pool_context = render_candidate_pool(pool)
+    critique, critic_results = run_targeted_critics(
+        prompt,
+        pool,
+        members,
+        config,
+        depth,
+        count=critic_count,
+        dispatcher=dispatcher,
+    )
+    critique_context = str(critique.get("context") or "")
+    donor_context = "\n\n".join(
+        part for part in (pool_context, critique_context) if part.strip()
+    )
     return {
         "operators": [row["operator"] for row in scouts],
         "scouts": scouts,
         "pool": pool,
-        "donor_context": render_candidate_pool(pool),
-    }, results
+        "critique": critique,
+        "donor_context": donor_context,
+    }, scout_results + critic_results
