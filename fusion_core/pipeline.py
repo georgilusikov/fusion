@@ -116,6 +116,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     prompt = args.prompt or sys.stdin.read().strip()
     if not prompt:
         return {"error": "empty prompt"}, 2
+    blind_judge = bool(getattr(args, "blind_judge", False))
 
     benchmark_path = Path(args.benchmark_results).expanduser() if args.benchmark_results else None
     decision = select_strategy(
@@ -170,13 +171,14 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "members": [dataclasses.asdict(member) for member in members],
             "judge": dataclasses.asdict(judge_member),
             "judge_members": [dataclasses.asdict(member) for member in judge_members],
+            "blind_judge": blind_judge,
             "drafter": dataclasses.asdict(drafter_member) if drafter_member else None,
         }, 0
 
     print(
         f"[fusion] strategy={decision.resolved} source={decision.source} "
         f"preset={decision.preset or 'custom'} members={[member.label for member in members]} "
-        f"judges={[member.label for member in judge_members]}",
+        f"judges={[member.label for member in judge_members]} blind_judge={blind_judge}",
         file=sys.stderr,
     )
 
@@ -196,6 +198,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         successful_results(panel_results),
         config,
         repair_attempts=effective_repairs,
+        blind=blind_judge,
     )
     rounds[0]["judge_valid"] = bool(judge.get("valid"))
 
@@ -223,6 +226,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 successful_results(panel_results),
                 config,
                 repair_attempts=effective_repairs,
+                blind=blind_judge,
             )
         rounds.append(
             {
@@ -245,6 +249,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             successful_results(panel_results),
             config,
             repair_attempts=effective_repairs,
+            blind=blind_judge,
         )
         rounds.append(
             {
@@ -268,6 +273,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "selection": decision.to_dict(),
         "depth": args.depth,
         "reasoning": args.reasoning,
+        "blind_judge": blind_judge,
         "panel": [item.to_dict() for item in panel_results],
         "successful_panel": [item.label for item in successes],
         "failed_panel": [item.label for item in failures],
