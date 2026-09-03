@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 from .config import PRESETS, DispatchConfig, Member, ModelResult
+from .deliberation import run_deliberation
 from .dispatch import dispatch
 from .draft_gate import run_draft_gate
 from .judge_panel import run_judge_panel
@@ -116,7 +117,10 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     prompt = args.prompt or sys.stdin.read().strip()
     if not prompt:
         return {"error": "empty prompt"}, 2
+
     blind_judge = bool(getattr(args, "blind_judge", False))
+    deliberation_mode = str(getattr(args, "deliberation", "off"))
+    max_scouts = int(getattr(args, "scouts", 4))
 
     benchmark_path = Path(args.benchmark_results).expanduser() if args.benchmark_results else None
     decision = select_strategy(
@@ -172,13 +176,16 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             "judge": dataclasses.asdict(judge_member),
             "judge_members": [dataclasses.asdict(member) for member in judge_members],
             "blind_judge": blind_judge,
+            "deliberation": deliberation_mode,
+            "scouts": max_scouts,
             "drafter": dataclasses.asdict(drafter_member) if drafter_member else None,
         }, 0
 
     print(
         f"[fusion] strategy={decision.resolved} source={decision.source} "
         f"preset={decision.preset or 'custom'} members={[member.label for member in members]} "
-        f"judges={[member.label for member in judge_members]} blind_judge={blind_judge}",
+        f"judges={[member.label for member in judge_members]} blind_judge={blind_judge} "
+        f"deliberation={deliberation_mode}",
         file=sys.stderr,
     )
 
@@ -202,11 +209,42 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     )
     rounds[0]["judge_valid"] = bool(judge.get("valid"))
 
+    deliberation_bundle: dict[str, Any] | None = None
+    deliberation_results: list[ModelResult] = []
+    donor_context = ""
+    if deliberation_mode == "on" and max_scouts > 0 and successful_results(panel_results):
+        deliberation_bundle, deliberation_results = run_deliberation(
+            prompt,
+            members,
+            judge,
+            config,
+            args.depth,
+            max_operators=max_scouts,
+        )
+        donor_context = str(deliberation_bundle.get("donor_context") or "")
+        pool = deliberation_bundle.get("pool") or {}
+        rounds.append(
+            {
+                "name": "deliberation-scouts",
+                "operators": list(deliberation_bundle.get("operators") or []),
+                "candidate_count": int(pool.get("candidate_count") or 0) if isinstance(pool, Mapping) else 0,
+                "valid_scouts": int(pool.get("valid_scouts") or 0) if isinstance(pool, Mapping) else 0,
+            }
+        )
+
     reviewer_count = (
         args.reviewers
         if args.reviewers is not None
         else (2 if decision.resolved == "pro" else 0)
     )
+    if (
+        args.reviewers is None
+        and deliberation_mode == "on"
+        and donor_context
+        and successful_results(panel_results)
+    ):
+        reviewer_count = max(reviewer_count, min(2, len(successful_results(panel_results))))
+
     if reviewer_count > 0 and successful_results(panel_results):
         reviews = review_round(
             prompt,
@@ -217,6 +255,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
             config,
             reviewer_count,
             log=lambda message: print(f"[fusion] {message}", file=sys.stderr),
+            donor_context=donor_context or None,
         )
         panel_results.extend(reviews)
         if successful_results(reviews):
@@ -233,6 +272,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
                 "name": "review",
                 "members": [item.label for item in reviews],
                 "judge_valid": bool(judge.get("valid")),
+                "deliberation_donor_used": bool(donor_context),
             }
         )
 
@@ -264,7 +304,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
     failures = failed_results(panel_results)
     best_result = best_panel_result(successes, judge)
 
-    all_results = list(panel_results)
+    all_results = list(panel_results) + deliberation_results
     _append_judge_metrics(judge, all_results)
 
     bundle: dict[str, Any] = {
@@ -274,6 +314,7 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "depth": args.depth,
         "reasoning": args.reasoning,
         "blind_judge": blind_judge,
+        "deliberation_mode": deliberation_mode,
         "panel": [item.to_dict() for item in panel_results],
         "successful_panel": [item.label for item in successes],
         "failed_panel": [item.label for item in failures],
@@ -281,6 +322,8 @@ def run_fusion(args: argparse.Namespace) -> tuple[dict[str, Any], int]:
         "rounds": rounds,
         "judge": judge,
     }
+    if deliberation_bundle is not None:
+        bundle["deliberation"] = deliberation_bundle
 
     draft_result: ModelResult | None = None
     if drafter_member is not None and successes:
