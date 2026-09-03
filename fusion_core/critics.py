@@ -21,41 +21,15 @@ class CriticSpec:
 
 
 CRITICS: dict[str, CriticSpec] = {
-    "assumption": CriticSpec(
-        "assumption",
-        "Assumption critic",
-        "Identify hidden assumptions that could invalidate attractive candidates.",
-    ),
-    "evidence": CriticSpec(
-        "evidence",
-        "Evidence critic",
-        "Identify unsupported claims and the evidence most needed to discriminate between candidates.",
-    ),
-    "causal": CriticSpec(
-        "causal",
-        "Causal critic",
-        "Attack weak causal links, missing confounders, and unjustified consequence chains.",
-    ),
-    "feasibility": CriticSpec(
-        "feasibility",
-        "Feasibility critic",
-        "Stress-test implementation constraints, dependencies, costs, and operational failure modes.",
-    ),
-    "adversarial": CriticSpec(
-        "adversarial",
-        "Adversarial critic",
-        "Find how competitors, users, or hostile actors could exploit or break the proposal.",
-    ),
-    "stakeholder": CriticSpec(
-        "stakeholder",
-        "Stakeholder critic",
-        "Check whether the candidate ignores incentives or reactions of affected actors.",
-    ),
+    "assumption": CriticSpec("assumption", "Assumption critic", "Identify hidden assumptions that could invalidate attractive candidates."),
+    "evidence": CriticSpec("evidence", "Evidence critic", "Identify unsupported claims and the evidence most needed to discriminate between candidates."),
+    "causal": CriticSpec("causal", "Causal critic", "Attack weak causal links, missing confounders, and unjustified consequence chains."),
+    "feasibility": CriticSpec("feasibility", "Feasibility critic", "Stress-test implementation constraints, dependencies, costs, and operational failure modes."),
+    "adversarial": CriticSpec("adversarial", "Adversarial critic", "Find how competitors, users, or hostile actors could exploit or break the proposal."),
+    "stakeholder": CriticSpec("stakeholder", "Stakeholder critic", "Check whether the candidate ignores incentives or reactions of affected actors."),
 }
 
 _DEFAULT_CRITICS = ("assumption", "evidence", "causal", "feasibility")
-
-
 CriticDispatcher = Callable[[Member, str, str, DispatchConfig, bool], ModelResult]
 
 
@@ -65,11 +39,7 @@ def plan_critics(prompt: str, pool: Mapping[str, Any], *, limit: int = 2) -> lis
     selected: list[str] = []
     text = prompt.casefold()
     rows = pool.get("candidates") if isinstance(pool, Mapping) else []
-    types = {
-        str(row.get("type"))
-        for row in rows
-        if isinstance(row, Mapping) and row.get("type")
-    }
+    types = {str(row.get("type")) for row in rows if isinstance(row, Mapping) and row.get("type")}
 
     def add(key: str) -> None:
         if key in CRITICS and key not in selected and len(selected) < limit:
@@ -136,14 +106,18 @@ def critic_prompt(
     user_prompt: str,
     critic: CriticSpec,
     pool: Mapping[str, Any],
+    expansion_context: str | None = None,
 ) -> str:
+    expansion_text = ""
+    if expansion_context and expansion_context.strip():
+        expansion_text = f"\n\n{expansion_context.strip()}\n"
     return (
         "You are a targeted critic. Attack the candidate pool using only the assigned critic lens. "
         "Do not produce a replacement final answer and do not reveal private chain-of-thought. "
         "Return concise, decision-relevant objections.\n\n"
         f"## Critic\n{critic.title}: {critic.instruction}\n\n"
         f"## Original request\n{user_prompt}\n\n"
-        f"{render_candidate_pool(pool, max_candidates=16)}\n\n"
+        f"{render_candidate_pool(pool, max_candidates=16)}{expansion_text}\n\n"
         "Return JSON only with this shape:\n"
         "{\n"
         '  "summary": "one concise synthesis",\n'
@@ -169,6 +143,7 @@ def run_targeted_critics(
     depth: str,
     *,
     count: int = 2,
+    expansion_context: str | None = None,
     dispatcher: CriticDispatcher = dispatch,
 ) -> tuple[dict[str, Any], list[ModelResult]]:
     if not pool.get("candidates") or count <= 0:
@@ -181,13 +156,7 @@ def run_targeted_critics(
     results: list[ModelResult | None] = [None] * len(assignments)
 
     def run_one(index: int, critic: CriticSpec, member: Member) -> None:
-        raw_result = dispatcher(
-            member,
-            critic_prompt(prompt, critic, pool),
-            depth,
-            config,
-            False,
-        )
+        raw_result = dispatcher(member, critic_prompt(prompt, critic, pool, expansion_context), depth, config, False)
         result = dataclasses.replace(
             raw_result,
             label=f"{member.label}:critic:{critic.key}",
@@ -195,19 +164,11 @@ def run_targeted_critics(
         )
         payload = extract_json(result.answer) if result.ok else None
         errors = validate_critique_payload(payload)
-        rows[index] = {
-            "critic": critic.key,
-            "member_label": member.label,
-            "payload": payload if not errors else None,
-            "validation_errors": errors,
-        }
+        rows[index] = {"critic": critic.key, "member_label": member.label, "payload": payload if not errors else None, "validation_errors": errors}
         results[index] = result
 
     with ThreadPoolExecutor(max_workers=max(1, len(assignments))) as executor:
-        futures = [
-            executor.submit(run_one, index, critic, member)
-            for index, (critic, member) in enumerate(assignments)
-        ]
+        futures = [executor.submit(run_one, index, critic, member) for index, (critic, member) in enumerate(assignments)]
         for future in as_completed(futures):
             future.result()
 
@@ -230,13 +191,9 @@ def run_targeted_critics(
 
     lines: list[str] = []
     if findings:
-        lines.append("## Targeted critique findings")
-        lines.append("These are objections to test, not authoritative facts.")
+        lines.extend(["## Targeted critique findings", "These are objections to test, not authoritative facts."])
         for finding in findings[:12]:
-            lines.append(
-                f"- {finding.get('target', '?')} severity={float(finding.get('severity', 0.0)):.2f} "
-                f"[{finding.get('critic', 'critic')}]: {finding.get('objection', '')}"
-            )
+            lines.append(f"- {finding.get('target', '?')} severity={float(finding.get('severity', 0.0)):.2f} [{finding.get('critic', 'critic')}]: {finding.get('objection', '')}")
             assumptions = finding.get("hidden_assumptions") or []
             if assumptions:
                 lines.append("  hidden assumptions: " + "; ".join(str(item) for item in assumptions[:3]))

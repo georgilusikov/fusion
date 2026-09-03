@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/fusion/branch-expansion.schema.json",
+  "title": "FusionBranchExpansion",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "target",
+    "thesis",
+    "required_conditions",
+    "direct_effects",
+    "second_order_effects",
+    "third_order_effects",
+    "failure_conditions",
+    "disconfirming_evidence"
+  ],
+  "properties": {
+    "target": {"type": "string", "minLength": 1},
+    "thesis": {"type": "string"},
+    "required_conditions": {"type": "array", "items": {"type": "string"}},
+    "direct_effects": {"type": "array", "items": {"type": "string"}},
+    "second_order_effects": {"type": "array", "items": {"type": "string"}},
+    "third_order_effects": {"type": "array", "items": {"type": "string"}},
+    "failure_conditions": {"type": "array", "items": {"type": "string"}},
+    "disconfirming_evidence": {"type": "array", "items": {"type": "string"}}
+  }
+}
